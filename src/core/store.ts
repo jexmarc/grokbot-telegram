@@ -1,0 +1,240 @@
+import type { ContextMessage, TypingScope } from "./types.js";
+import { scopeDeadline } from "./typing.js";
+
+export interface Store {
+  claimUpdate(updateId: number, now: number, ttlMs: number): Promise<"new" | "duplicate">;
+  /** Drop a claim so a failed handler can still be retried by Telegram. */
+  releaseUpdate(updateId: number): Promise<void>;
+  /**
+   * Claim one Telegram message (chat + message_id) for a wake. Atomic: of any
+   * number of concurrent claims, one gets "new". A redelivery under a new
+   * update_id, or an edit of a message that already woke the bot, gets "duplicate".
+   */
+  claimMessage(chatId: string, messageId: number, now: number, ttlMs: number): Promise<"new" | "duplicate">;
+  hitRate(
+    bucketKey: string,
+    now: number,
+    windowMs: number,
+    max: number,
+  ): Promise<{ allowed: boolean; count: number }>;
+  /** Returns the previous buffer, capped at `limit`, not including `message`. */
+  pushContext(scopeKey: string, message: ContextMessage, limit: number): Promise<ContextMessage[]>;
+  /** The active wakes in one chat (and forum topic), or null when none. */
+  getTyping(scopeKey: string): Promise<TypingScope | null>;
+  setTyping(scopeKey: string, scope: TypingScope | null): Promise<void>;
+  closeWake(wakeId: string, now: number, ttlMs: number): Promise<void>;
+  /**
+   * Claim an idempotent /send. Atomic set-if-absent: returns null when this
+   * caller now owns `key` (stored as `pending`), or the record already there.
+   */
+  claimSend(key: string, now: number, ttlMs: number): Promise<SendRecord | null>;
+  /** Record how a claimed send ended. Kept for `ttlMs` (the reply token's remaining life). */
+  finishSend(key: string, record: SendRecord, now: number, ttlMs: number): Promise<void>;
+  /** Drop a claim after a send that definitely did not go out, so it can be tried again. */
+  releaseSend(key: string): Promise<void>;
+  isWakeClosed(wakeId: string, now: number): Promise<boolean>;
+}
+
+/**
+ * One idempotent /send. `pending` while it is in flight (or if the instance
+ * died mid-send), `sent` once Telegram accepted every part, `ambiguous` when
+ * Telegram may or may not have posted it. Only `sent` is answered with
+ * already_sent; the other two are never resent.
+ */
+export interface SendRecord {
+  state: "pending" | "sent" | "ambiguous";
+  message_ids: number[];
+}
+
+export function normalizeSendRecord(value: unknown): SendRecord | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (record.state !== "pending" && record.state !== "sent" && record.state !== "ambiguous") return null;
+  const ids = Array.isArray(record.message_ids)
+    ? record.message_ids.filter((id): id is number => typeof id === "number")
+    : [];
+  return { state: record.state, message_ids: ids };
+}
+
+export function scopeKey(chatId: string, threadId: number | null): string {
+  return `chat:${chatId}:thread:${threadId ?? "root"}`;
+}
+
+export function chatIdFromScope(key: string): string {
+  const marker = ":thread:";
+  const start = "chat:".length;
+  const idx = key.lastIndexOf(marker);
+  if (!key.startsWith("chat:") || idx < start) return "";
+  return key.slice(start, idx);
+}
+
+export function rateChatKey(chatId: string): string {
+  return `rate:chat:${chatId}`;
+}
+
+export function rateUserKey(chatId: string, userId: string): string {
+  return `rate:chat:${chatId}:user:${userId}`;
+}
+
+export function chatIdFromRateKey(key: string): string {
+  const prefix = "rate:chat:";
+  if (!key.startsWith(prefix)) return "";
+  const rest = key.slice(prefix.length);
+  const userIdx = rest.indexOf(":user:");
+  return userIdx === -1 ? rest : rest.slice(0, userIdx);
+}
+
+/**
+ * How long a message that started a wake is remembered, so an edit of it does
+ * not start another. Matches the age past which context is no longer attached.
+ */
+export const MESSAGE_CLAIM_TTL_MS = 7 * 24 * 3600 * 1000;
+
+/** Context older than this (by Telegram message date) is not attached to wakes. */
+export const CONTEXT_MAX_AGE_SECONDS = 7 * 24 * 3600;
+
+/** Previous buffer for `message`: capped at `limit`, without itself or entries a week older than it. */
+export function freshContext(previous: readonly ContextMessage[], message: ContextMessage, limit: number): ContextMessage[] {
+  const cutoff = message.date === null ? null : message.date - CONTEXT_MAX_AGE_SECONDS;
+  // Same message_id = a Telegram retry or an edit; never report the current message as prior context.
+  const fresh = previous.filter((item) =>
+    item.message_id !== message.message_id && (cutoff === null || item.date === null || item.date >= cutoff));
+  return fresh.slice(-limit);
+}
+
+/** Bound memory in long-lived single-process deployments. */
+const MAX_MEMORY_SCOPES = 1000;
+
+interface Bucket {
+  windowStart: number;
+  count: number;
+}
+
+export class MemoryStore implements Store {
+  private readonly updates = new Map<number, number>();
+  private readonly messages = new Map<string, number>();
+  private readonly buckets = new Map<string, Bucket>();
+  private readonly contexts = new Map<string, ContextMessage[]>();
+  private readonly typing = new Map<string, TypingScope>();
+  private readonly closedWakes = new Map<string, number>();
+  private readonly sends = new Map<string, { until: number; record: SendRecord }>();
+
+  async claimUpdate(updateId: number, now: number, ttlMs: number): Promise<"new" | "duplicate"> {
+    this.pruneUpdates(now);
+    const expiry = this.updates.get(updateId);
+    if (expiry !== undefined && expiry > now) return "duplicate";
+    this.updates.set(updateId, now + ttlMs);
+    return "new";
+  }
+
+  async releaseUpdate(updateId: number): Promise<void> {
+    this.updates.delete(updateId);
+  }
+
+  async claimMessage(chatId: string, messageId: number, now: number, ttlMs: number): Promise<"new" | "duplicate"> {
+    for (const [key, expiry] of this.messages) {
+      if (expiry <= now) this.messages.delete(key);
+    }
+    const key = `${chatId}:${messageId}`;
+    const expiry = this.messages.get(key);
+    if (expiry !== undefined && expiry > now) return "duplicate";
+    this.messages.set(key, now + ttlMs);
+    return "new";
+  }
+
+  async hitRate(
+    bucketKey: string,
+    now: number,
+    windowMs: number,
+    max: number,
+  ): Promise<{ allowed: boolean; count: number }> {
+    const windowStart = Math.floor(now / windowMs) * windowMs;
+    let bucket = this.buckets.get(bucketKey);
+    if (!bucket || bucket.windowStart !== windowStart) {
+      bucket = { windowStart, count: 0 };
+      for (const [key, value] of this.buckets) {
+        if (value.windowStart < windowStart) this.buckets.delete(key);
+      }
+    }
+    bucket.count += 1;
+    this.buckets.set(bucketKey, bucket);
+    return { allowed: bucket.count <= max, count: bucket.count };
+  }
+
+  async pushContext(key: string, message: ContextMessage, limit: number): Promise<ContextMessage[]> {
+    const previous = this.contexts.get(key) ?? [];
+    const prior = freshContext(previous, message, limit);
+    // Re-insert so Map order is least recently used first, then evict.
+    this.contexts.delete(key);
+    this.contexts.set(key, [...prior, message].slice(-limit));
+    while (this.contexts.size > MAX_MEMORY_SCOPES) {
+      const oldest = this.contexts.keys().next().value;
+      if (oldest === undefined) break;
+      this.contexts.delete(oldest);
+    }
+    return prior;
+  }
+
+  async getTyping(key: string): Promise<TypingScope | null> {
+    const scope = this.typing.get(key);
+    return scope ? structuredClone(scope) : null;
+  }
+
+  async setTyping(key: string, scope: TypingScope | null): Promise<void> {
+    if (scope && Object.keys(scope.wakes).length > 0) {
+      // In "once" mode no timer clears a scope, so drop the ones past every wake's ceiling here.
+      const latest = Math.max(...Object.values(scope.wakes).map((wake) => wake.startedAt));
+      for (const [other, value] of this.typing) {
+        if (other !== key && scopeDeadline(value) <= latest) this.typing.delete(other);
+      }
+      this.typing.set(key, structuredClone(scope));
+    } else {
+      this.typing.delete(key);
+    }
+  }
+
+  async closeWake(wakeId: string, now: number, ttlMs: number): Promise<void> {
+    this.pruneWakes(now);
+    this.closedWakes.set(wakeId, now + ttlMs);
+  }
+
+  async isWakeClosed(wakeId: string, now: number): Promise<boolean> {
+    const expiry = this.closedWakes.get(wakeId);
+    if (expiry === undefined) return false;
+    if (expiry <= now) {
+      this.closedWakes.delete(wakeId);
+      return false;
+    }
+    return true;
+  }
+
+  async claimSend(key: string, now: number, ttlMs: number): Promise<SendRecord | null> {
+    for (const [other, entry] of this.sends) {
+      if (entry.until <= now) this.sends.delete(other);
+    }
+    const existing = this.sends.get(key);
+    if (existing) return structuredClone(existing.record);
+    this.sends.set(key, { until: now + ttlMs, record: { state: "pending", message_ids: [] } });
+    return null;
+  }
+
+  async finishSend(key: string, record: SendRecord, now: number, ttlMs: number): Promise<void> {
+    this.sends.set(key, { until: now + ttlMs, record: structuredClone(record) });
+  }
+
+  async releaseSend(key: string): Promise<void> {
+    this.sends.delete(key);
+  }
+
+  private pruneUpdates(now: number): void {
+    for (const [id, expiry] of this.updates) {
+      if (expiry <= now) this.updates.delete(id);
+    }
+  }
+
+  private pruneWakes(now: number): void {
+    for (const [id, expiry] of this.closedWakes) {
+      if (expiry <= now) this.closedWakes.delete(id);
+    }
+  }
+}

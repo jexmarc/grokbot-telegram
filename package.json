@@ -1,0 +1,39 @@
+{
+  "name": "grokbot-telegram",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Connect a Grok Bot to Telegram direct messages and group chats.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "tsx src/adapters/node/server.ts",
+    "dev": "tsx watch src/adapters/node/server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "set-webhook": "tsx scripts/set-webhook.ts",
+    "set-commands": "tsx scripts/set-commands.ts",
+    "webhook-info": "tsx scripts/webhook-info.ts",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@vercel/functions": "^3.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@types/node": "^22.20.5",
+    "eslint": "^9.36.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.0",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.40.0"
+  },
+  "overrides": {
+    "sharp": "^0.35.5"
+  }
+}
