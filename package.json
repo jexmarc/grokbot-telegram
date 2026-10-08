@@ -8,15 +8,17 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "tsx src/adapters/node/server.ts",
-    "dev": "tsx watch src/adapters/node/server.ts",
+    "start": "node --env-file-if-exists=.env --import tsx src/adapters/node/server.ts",
+    "dev": "node --env-file-if-exists=.env --watch --import tsx src/adapters/node/server.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "set-webhook": "tsx scripts/set-webhook.ts",
-    "set-commands": "tsx scripts/set-commands.ts",
-    "webhook-info": "tsx scripts/webhook-info.ts",
+    "set-webhook": "node --env-file=.env --import tsx scripts/set-webhook.ts",
+    "set-commands": "node --env-file=.env --import tsx scripts/set-commands.ts",
+    "webhook-info": "node --env-file=.env --import tsx scripts/webhook-info.ts",
+    "get-updates": "node --env-file=.env --import tsx scripts/get-updates.ts",
+    "delete-webhook": "node --env-file=.env --import tsx scripts/delete-webhook.ts",
     "cf:dev": "wrangler dev",
     "cf:deploy": "wrangler deploy"
   },

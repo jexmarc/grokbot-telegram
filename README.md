@@ -2,36 +2,22 @@
 
 Connect a Grok Bot assistant to Telegram. People message the bot in a direct chat, or in a group by mentioning it, sending a command, or replying to it.
 
-To install, tell your Grok Bot: "Read this repo and walk me through setting you up to connect with me on Telegram." The bot reads [`AGENTS.md`](AGENTS.md), goes through the requirements below with you, and then follows [Connect Grok Bot to Telegram](.grok/skills/telegram-connect/SKILL.md) one step at a time.
+```text
+Read https://github.com/jexmarc/grokbot-telegram and walk me through setting you up to connect with me on Telegram.
+```
 
 ## Requirements
 
-Enter each secret only in the host's secret settings or in your own terminal. When the bot asks, tell it that the name is saved.
-
-- **Grok Bot.** This is the assistant that answers on Telegram. During setup it creates a routine with trigger `{ "type": "webhook" }`. You copy the routine URL to `GROK_WEBHOOK_URL` and the sender key to `GROK_WEBHOOK_SENDER_KEY`. The bridge sends that key as `Authorization: Bearer`.
-
-- **Telegram.** You need an account and a bot from [@BotFather](https://t.me/BotFather) (`/newbot`). Store the token as `TELEGRAM_BOT_TOKEN`. Store the username, with the `@` removed, as `TELEGRAM_BOT_USERNAME`.
-
-- **One host with a public `https` origin.** That origin is `PUBLIC_BASE_URL`. Telegram posts updates to `PUBLIC_BASE_URL` plus `/webhook`. Plain `http` works for localhost.
-  - **Cloudflare Workers** (recommended). You need a Cloudflare account. Run `npx wrangler login`, then `npx wrangler secret put` for each secret, then `npx wrangler deploy`. The `CHAT_SESSION` Durable Object in `wrangler.toml` stores dedupe and typing state.
-  - **Vercel.** You need a Vercel account. Import the repo in the project UI, or use the Vercel CLI, and set the variables in the project environment.
-  - **Node** on Fly.io, Railway, Render, or a VPS. You need an account on that host. `npm start` listens on `PORT` (default `8080`). Put HTTPS in front and use that origin as `PUBLIC_BASE_URL`.
-
-- **Node.js 22 or newer, npm, and a checkout of this repo.** Run `npm install`. After the deploy, run `npm run set-webhook` and `npm run set-commands` in that checkout, with the secrets in that shell.
-
-- **Two secrets you generate.** Run `openssl rand -hex 32` twice. Use a new pair for every bridge.
-  - `TELEGRAM_WEBHOOK_SECRET` is Telegram's `secret_token`. It needs 16 to 256 characters from `A-Z`, `a-z`, `0-9`, `_`, and `-`.
-  - `REPLY_TOKEN_SECRET` signs reply tokens. It needs at least 32 characters.
-
-- **An allowlist.** Set `ALLOWLIST_USER_IDS`, `ALLOWLIST_CHAT_IDS`, or both, as comma-separated decimal ids. With both empty, the bridge denies every sender. A user id admits that person in direct messages and in every chat they speak in. A chat id admits every sender inside that chat. Read `message.from.id` and `message.chat.id` from `getUpdates` before you run `npm run set-webhook`. After that, take the ids from a log line whose reason is `not_allowlisted`.
-
-- **A group, if you want one.** Add the bot to the group. In Telegram's default privacy mode, the bot receives `/ask@YourBot`, replies to its own messages, and service messages. Test an `@mention` in the group. A bare `/ask` arrives only when this bot was the last bot to post, so ask people to send `/ask@YourBot`. To put ordinary chatter in the context buffer, turn privacy off with BotFather `/setprivacy`, or make the bot a group admin. After you change privacy mode, remove the bot from the group and add it again.
+- Node.js 22 or newer, npm, and `openssl`.
+- A Telegram account and a bot from [@BotFather](https://t.me/BotFather).
+- One host. Cloudflare Workers, Vercel, or Node (Fly.io, Railway, Render, or a VPS).
+- A checkout of this repo.
 
 Other settings have defaults (see [Configuration](#configuration)). Setup is complete when `GET /healthz` returns `"ready": true` and an empty `problems` list.
 
 ### For agents
 
-Follow [Connect Grok Bot to Telegram](.grok/skills/telegram-connect/SKILL.md) one step at a time, and finish each check before the next step. Create the webhook routine with your routine tool and the saved prompt in step 9 of that file, with `BRIDGE_ORIGIN` replaced by the `PUBLIC_BASE_URL` origin. The person copies the routine URL and sender key from the agent's info pane (the agent's name in the chat header, or Cmd+Shift+I), under Routines. Ask whether each secret name is saved. On each later wake, follow [Reply in Telegram](.grok/skills/telegram-reply/SKILL.md).
+The fenced block above is the prompt a person pastes to start. Follow [Connect Grok Bot to Telegram](.grok/skills/telegram-connect/SKILL.md) one step at a time, and finish each check before the next step. On each later wake, follow [Reply in Telegram](.grok/skills/telegram-reply/SKILL.md).
 
 ## How it works
 
@@ -62,19 +48,118 @@ sequenceDiagram
   Bridge->>TG: Clear 👀, stop typing for this wake
 ```
 
-## Set up by hand
+## Setup
 
-1. Gather the [Requirements](#requirements) and set each variable on the host.
-2. Ask your Grok Bot to create a routine with trigger `{ "type": "webhook" }` and the saved prompt from step 9 of the [connect skill](.grok/skills/telegram-connect/SKILL.md). Open the agent's info pane, find the routine under Routines, and copy its URL and sender key into the host secrets.
-3. Deploy.
-4. Point Telegram at the deployment:
+Copy [`.env.example`](.env.example) to `.env`. Put each value in that file once. Cloudflare, Vercel, Fly.io, Railway, Render, and a VPS load that same file for deploy. `npm run set-webhook` and `npm run set-commands` read it on every host. Delete a line you have not filled in before a host loads the file. An empty `KEY=` line is still a value.
 
-   ```bash
-   npm run set-webhook
-   npm run set-commands
-   ```
+```bash
+cp .env.example .env
+npm install
+```
 
-5. Message the bot in a direct chat, then try a group.
+Create the bot with BotFather `/newbot`. Write the token on `TELEGRAM_BOT_TOKEN` and the username, with the `@` removed, on `TELEGRAM_BOT_USERNAME`. Run `openssl rand -hex 32` twice and write the results on `TELEGRAM_WEBHOOK_SECRET` and `REPLY_TOKEN_SECRET`. `TELEGRAM_WEBHOOK_SECRET` needs 16 to 256 characters from `A-Z`, `a-z`, `0-9`, `_`, and `-`. `REPLY_TOKEN_SECRET` needs at least 32 characters, and a different value for every bridge.
+
+The bot stays silent until `npm run set-webhook` has succeeded. Message it anyway, so Telegram has an update to read. Then:
+
+```bash
+npm run webhook-info
+npm run get-updates
+```
+
+`npm run get-updates` takes no offset. Read `message.from.id` and `message.chat.id` from the JSON. When `webhook-info` shows a `url`, `getUpdates` comes back empty even if `pending_update_count` is 1. Run `npm run delete-webhook`, then `npm run get-updates` again. You register the webhook again at the end of this section.
+
+Write the ids into `.env`. `ALLOWLIST_USER_IDS` admits that person in direct messages and in every chat they speak in. `ALLOWLIST_CHAT_IDS` admits every sender inside that chat. With both empty, the bridge denies every sender. Leave `PUBLIC_BASE_URL`, `GROK_WEBHOOK_URL`, and `GROK_WEBHOOK_SENDER_KEY` out of the file until the steps below.
+
+### Cloudflare Workers
+
+Checked 8 October 2026. Workers Free includes 100,000 requests a day and SQLite Durable Objects at 100,000 requests a day, which covers a personal bot, and each invocation gets 10 milliseconds of CPU. The first paid plan is Workers Paid at $5 USD a month.
+
+Wrangler is Cloudflare's command-line tool, installed by npm in this repo. You use it to log in, put secrets, and deploy this Worker.
+
+```bash
+npx wrangler login
+npx wrangler deploy
+```
+
+Write the `workers.dev` origin Wrangler prints into `PUBLIC_BASE_URL` in `.env`. Remove any trailing slash. Then:
+
+```bash
+npx wrangler secret bulk .env
+```
+
+When `PUBLIC_BASE_URL` is already in `.env`, this one command deploys and uploads the file:
+
+```bash
+npx wrangler deploy --secrets-file .env
+```
+
+Leave `PATH_PREFIX` empty. Local dev reads `.env`. Wrangler reads `.dev.vars` when that file exists, so keep this setup's values in `.env` alone.
+
+```bash
+npm run cf:dev
+```
+
+### Vercel
+
+Checked 8 October 2026. The Hobby plan is $0 a month for personal, non-commercial use and includes 1 million function invocations, 4 hours of active CPU, and 360 GB-hours of provisioned memory a month, which covers a personal bot. The first paid plan is Pro at $20 a month.
+
+The Vercel CLI links this repo to a project and deploys it. It has no command that loads `.env`. Point the team Environment Variables page at that file (paste or import it). `npm run set-webhook` and `npm run set-commands` still read the local `.env`.
+
+```bash
+npx vercel link
+npx vercel --prod
+```
+
+Write the deployment origin into `PUBLIC_BASE_URL` in `.env`. In the Vercel dashboard, open the team, then Settings, then Environment Variables. Paste or import `.env`, choose the environments, link the variables to this project, and save. Changes apply on the next deploy.
+
+```bash
+npx vercel --prod
+```
+
+`vercel.json` rewrites `/webhook`, `/send`, `/typing/stop`, `/typing/heartbeat`, and `/healthz` to `api/index.ts`. Leave `PATH_PREFIX` empty.
+
+### Node
+
+Checked 8 October 2026. Railway Free's $1 monthly credit does not cover a process left running, at $10 per GB-month of memory, and Hobby is $5 a month with $5 of credit included. Render's free web service is $0 for 512 MB and spins down after 15 minutes without a request, so the instance that stays up is $7 a month, and Fly.io has no free tier after a trial of 2 machine-hours or 7 days, with the smallest always-on machine at $2.19 per 30 days.
+
+`npm start` runs this bridge with Node and reads `.env`. Each place below loads that same file, then you run `npm run set-webhook` and `npm run set-commands` from the checkout.
+
+On a VPS, copy the checkout onto the machine so `.env` is next to the code, and start the process:
+
+```bash
+npm start
+```
+
+On Fly.io, `fly secrets import` is Fly's command for loading secrets. It reads `.env` from standard input. The start command on the app is `npm start`.
+
+```bash
+fly secrets import < .env
+```
+
+On Railway, open the service Variables RAW Editor and paste `.env`. The start command is `npm start`.
+
+On Render, there is no bulk-secret command. Point the service environment at `.env`. The start command is `npm start`.
+
+`npm start` listens on `PORT` (default 8080). Put HTTPS in front, and write that origin into `PUBLIC_BASE_URL` in `.env`. Load the file again with the same host step, then start.
+
+### Routine, webhook, commands
+
+Ask the bot to create a webhook routine with the saved prompt in step 9 of the [connect skill](.grok/skills/telegram-connect/SKILL.md). Replace `BRIDGE_ORIGIN` with the `PUBLIC_BASE_URL` origin. Open these two links, with the folder id of that routine, and write the values into `.env`.
+
+```text
+grokbot://app/v1/sidebar?target=webhook-url&automation=<routine folder id>
+grokbot://app/v1/sidebar?target=webhook-key&automation=<routine folder id>
+```
+
+The first link copies the URL onto `GROK_WEBHOOK_URL`. The second copies the sender key onto `GROK_WEBHOOK_SENDER_KEY`. Load `.env` again the same way that host already did. Cloudflare is `npx wrangler secret bulk .env`. Vercel is another paste or import of `.env` on the team Environment Variables page, then `npx vercel --prod`. Fly.io is `fly secrets import < .env`. Railway is the RAW Editor again. Render is the service environment pointed at `.env` again. A VPS is a restart of `npm start` so it reads the file. Then:
+
+```bash
+npm run set-webhook
+npm run set-commands
+npm run webhook-info
+```
+
+Message the bot in a direct chat, then try a group.
 
 ## How the assistant replies
 
@@ -107,11 +192,11 @@ The token lasts `REPLY_TOKEN_TTL_SECONDS` (30 minutes by default). It works for 
 
 On Vercel and Node, dedupe state lasts as long as the process. A Telegram retry that reaches a restarted process or a second instance can wake the bot again. Choose Cloudflare if that matters to you.
 
-On Cloudflare, put secrets in with `wrangler secret put`. Local Worker dev reads the gitignored `.dev.vars`. Copy it from [`.env.example`](.env.example).
+Cloudflare, Vercel, Fly.io, Railway, Render, and a VPS load the gitignored `.env`. The commands are in [Setup](#setup). `npm run set-webhook` and `npm run set-commands` read that file on every host. Local `wrangler dev` reads it too. Wrangler reads `.dev.vars` when that file exists, so keep the setup values in `.env` alone.
 
-Vercel serves `/webhook`, `/send`, `/typing/stop`, `/typing/heartbeat`, and `/healthz` from one function, `api/index.ts`, so every route shares that instance's memory. The 👀 clears when the final answer reaches the instance that took the message.
+Vercel serves `/webhook`, `/send`, `/typing/stop`, `/typing/heartbeat`, and `/healthz` from one function, `api/index.ts`, so every route shares that instance's memory. The 👀 clears when the final answer reaches the instance that took the message. The team Environment Variables page is where Vercel loads `.env`. The next `npx vercel --prod` deploys those values.
 
-On Node, run `npm install` and `npm start`. The process listens on `PORT` (default `8080`).
+On Node, `npm start` reads `.env` and listens on `PORT` (default `8080`). Fly.io loads the file with `fly secrets import < .env`. Railway loads it through the Variables RAW Editor. Render loads it by pointing the service environment at `.env`. A VPS loads it by keeping `.env` next to the code.
 
 ## Progress feedback
 
@@ -141,7 +226,7 @@ In a private chat, every message from an allowlisted sender or chat wakes the bo
 - starts with a command from `WAKE_COMMANDS`, such as `/ask` or `/ask@YourBot`, or
 - replies to one of the bot's own messages.
 
-The bridge keeps other group messages in a per-topic buffer (`CONTEXT_LIMIT`, 10 by default) and attaches them to the next wake as context. It ignores messages from other bots. For privacy mode, see the group item in [Requirements](#requirements).
+The bridge keeps other group messages in a per-topic buffer (`CONTEXT_LIMIT`, 10 by default) and attaches them to the next wake as context. It ignores messages from other bots. In Telegram's default privacy mode the bot receives `/ask@YourBot`, replies to its own messages, and service messages. Turn privacy off with BotFather `/setprivacy`, or make the bot an admin, then remove the bot from the group and add it again.
 
 When the bot is in the groups you want, send BotFather `/setjoingroups` and choose Disable to keep it to those groups.
 
@@ -212,11 +297,13 @@ npm run lint
 npm run set-webhook
 npm run set-commands
 npm run webhook-info
+npm run get-updates
+npm run delete-webhook
 npm run cf:dev
 npm run cf:deploy
 ```
 
-Run the Telegram scripts with the secrets in that shell's environment. `read -rs TELEGRAM_BOT_TOKEN && export TELEGRAM_BOT_TOKEN` keeps the token out of shell history. `set-webhook` subscribes Telegram to `message` and `edited_message`, and refuses an invalid webhook secret or a non-https `PUBLIC_BASE_URL`. `webhook-info` prints Telegram's `getWebhookInfo` result. The scripts print Telegram's `ok`, `description`, and `result` fields.
+`set-webhook`, `set-commands`, `webhook-info`, `get-updates`, and `delete-webhook` read `.env`. `get-updates` calls `getUpdates` with no offset. `set-webhook` subscribes Telegram to `message` and `edited_message`, and refuses an invalid webhook secret or a non-https `PUBLIC_BASE_URL`. The scripts print Telegram's `ok`, `description`, and `result` fields.
 
 ## Security
 
@@ -231,7 +318,7 @@ Run the Telegram scripts with the secrets in that shell's environment. `read -rs
 - `/send` checks the bearer before it reads the body.
 - The bridge splits outgoing text at 4096 UTF-16 units, on a paragraph, then a line, then a hard cut that keeps surrogate pairs whole. It sends plain text. On HTTP 429 it waits `retry_after` when that is 5 seconds or less, at most twice, and returns longer waits to the caller as `retry_after`.
 - Logs are single-line JSON. They carry drop reasons (`not_allowlisted`, `not_addressed`, `duplicate`, `rate_limited`) with chat and user ids, which you need for the allowlist. The logger redacts secrets and bearer values.
-- Keep secrets in the host secret store or a gitignored env file. `.env.example` holds placeholders.
+- Keep secrets in the gitignored `.env`. Cloudflare, Vercel, Fly.io, Railway, Render, and a VPS load that file. `.env.example` holds placeholders.
 
 ## License
 

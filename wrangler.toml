@@ -1,18 +1,3 @@
-# Cloudflare Workers is the primary host.
-# Put secrets in the Workers secret store:
-#   wrangler secret put TELEGRAM_BOT_TOKEN
-#   wrangler secret put TELEGRAM_WEBHOOK_SECRET
-#   wrangler secret put TELEGRAM_BOT_USERNAME
-#   wrangler secret put GROK_WEBHOOK_URL
-#   wrangler secret put GROK_WEBHOOK_SENDER_KEY
-#   wrangler secret put REPLY_TOKEN_SECRET
-#   wrangler secret put PUBLIC_BASE_URL
-#   wrangler secret put ALLOWLIST_USER_IDS
-#   wrangler secret put ALLOWLIST_CHAT_IDS
-# Optional settings and their defaults are in README.md under Configuration.
-#
-# For local dev, copy placeholders into .dev.vars (gitignored).
-
 name = "grokbot-telegram"
 main = "src/adapters/cloudflare/worker.ts"
 compatibility_date = "2026-01-15"
