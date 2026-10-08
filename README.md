@@ -50,7 +50,7 @@ sequenceDiagram
 
 ## Setup
 
-Copy [`.env.example`](.env.example) to `.env`. Put each value in that file once. Cloudflare, Vercel, and Node read it, and so do `npm run set-webhook` and `npm run set-commands`. Delete any line you have not filled in before an upload. `wrangler secret bulk` uploads every `KEY=value` line, including an empty value.
+Copy [`.env.example`](.env.example) to `.env`. Put each value in that file once. Cloudflare, Vercel, Fly.io, Railway, Render, and a VPS load that same file for deploy. `npm run set-webhook` and `npm run set-commands` read it on every host. Delete a line you have not filled in before a host loads the file. An empty `KEY=` line is still a value.
 
 ```bash
 cp .env.example .env
@@ -103,7 +103,7 @@ npm run cf:dev
 
 Checked 8 October 2026. The Hobby plan is $0 a month for personal, non-commercial use and includes 1 million function invocations, 4 hours of active CPU, and 360 GB-hours of provisioned memory a month, which covers a personal bot. The first paid plan is Pro at $20 a month.
 
-The Vercel CLI links this repo to a project and deploys it. The team Environment Variables page imports `.env`.
+The Vercel CLI links this repo to a project and deploys it. It has no command that loads `.env`. Point the team Environment Variables page at that file (paste or import it). `npm run set-webhook` and `npm run set-commands` still read the local `.env`.
 
 ```bash
 npx vercel link
@@ -122,21 +122,25 @@ npx vercel --prod
 
 Checked 8 October 2026. Railway Free's $1 monthly credit does not cover a process left running, at $10 per GB-month of memory, and Hobby is $5 a month with $5 of credit included. Render's free web service is $0 for 512 MB and spins down after 15 minutes without a request, so the instance that stays up is $7 a month, and Fly.io has no free tier after a trial of 2 machine-hours or 7 days, with the smallest always-on machine at $2.19 per 30 days.
 
-`npm start` runs this bridge with Node and reads `.env`. On Fly.io, `fly secrets import` is the command that loads that file. On Railway, the service Variables RAW Editor takes the contents of `.env`, and the start command is `npm start`. On Render, the start command is `npm start` and the service environment holds the same values.
+`npm start` runs this bridge with Node and reads `.env`. Each place below loads that same file, then you run `npm run set-webhook` and `npm run set-commands` from the checkout.
 
-On the machine that has `.env`:
+On a VPS, copy the checkout onto the machine so `.env` is next to the code, and start the process:
 
 ```bash
 npm start
 ```
 
-On Fly.io:
+On Fly.io, `fly secrets import` is Fly's command for loading secrets. It reads `.env` from standard input. The start command on the app is `npm start`.
 
 ```bash
 fly secrets import < .env
 ```
 
-`npm start` listens on `PORT` (default 8080). Put HTTPS in front, and write that origin into `PUBLIC_BASE_URL`.
+On Railway, open the service Variables RAW Editor and paste `.env`. The start command is `npm start`.
+
+On Render, there is no bulk-secret command. Point the service environment at `.env`. The start command is `npm start`.
+
+`npm start` listens on `PORT` (default 8080). Put HTTPS in front, and write that origin into `PUBLIC_BASE_URL` in `.env`. Load the file again with the same host step, then start.
 
 ### Routine, webhook, commands
 
@@ -147,7 +151,7 @@ grokbot://app/v1/sidebar?target=webhook-url&automation=<routine folder id>
 grokbot://app/v1/sidebar?target=webhook-key&automation=<routine folder id>
 ```
 
-The first link copies the URL onto `GROK_WEBHOOK_URL`. The second copies the sender key onto `GROK_WEBHOOK_SENDER_KEY`. Upload `.env` again with the same host command (`npx wrangler secret bulk .env`, the Vercel import plus `npx vercel --prod`, or a restart of `npm start` / `fly secrets import < .env`). Then:
+The first link copies the URL onto `GROK_WEBHOOK_URL`. The second copies the sender key onto `GROK_WEBHOOK_SENDER_KEY`. Load `.env` again the same way that host already did. Cloudflare is `npx wrangler secret bulk .env`. Vercel is another paste or import of `.env` on the team Environment Variables page, then `npx vercel --prod`. Fly.io is `fly secrets import < .env`. Railway is the RAW Editor again. Render is the service environment pointed at `.env` again. A VPS is a restart of `npm start` so it reads the file. Then:
 
 ```bash
 npm run set-webhook
@@ -188,11 +192,11 @@ The token lasts `REPLY_TOKEN_TTL_SECONDS` (30 minutes by default). It works for 
 
 On Vercel and Node, dedupe state lasts as long as the process. A Telegram retry that reaches a restarted process or a second instance can wake the bot again. Choose Cloudflare if that matters to you.
 
-On Cloudflare, `npx wrangler secret bulk .env` uploads the gitignored `.env`. Local `wrangler dev` reads that same file.
+Cloudflare, Vercel, Fly.io, Railway, Render, and a VPS load the gitignored `.env`. The commands are in [Setup](#setup). `npm run set-webhook` and `npm run set-commands` read that file on every host. Local `wrangler dev` reads it too. Wrangler reads `.dev.vars` when that file exists, so keep the setup values in `.env` alone.
 
-Vercel serves `/webhook`, `/send`, `/typing/stop`, `/typing/heartbeat`, and `/healthz` from one function, `api/index.ts`, so every route shares that instance's memory. The 👀 clears when the final answer reaches the instance that took the message.
+Vercel serves `/webhook`, `/send`, `/typing/stop`, `/typing/heartbeat`, and `/healthz` from one function, `api/index.ts`, so every route shares that instance's memory. The 👀 clears when the final answer reaches the instance that took the message. The team Environment Variables page is where Vercel loads `.env`. The next `npx vercel --prod` deploys those values.
 
-On Node, run `npm install` and `npm start`. The process listens on `PORT` (default `8080`).
+On Node, `npm start` reads `.env` and listens on `PORT` (default `8080`). Fly.io loads the file with `fly secrets import < .env`. Railway loads it through the Variables RAW Editor. Render loads it by pointing the service environment at `.env`. A VPS loads it by keeping `.env` next to the code.
 
 ## Progress feedback
 
@@ -314,7 +318,7 @@ npm run cf:deploy
 - `/send` checks the bearer before it reads the body.
 - The bridge splits outgoing text at 4096 UTF-16 units, on a paragraph, then a line, then a hard cut that keeps surrogate pairs whole. It sends plain text. On HTTP 429 it waits `retry_after` when that is 5 seconds or less, at most twice, and returns longer waits to the caller as `retry_after`.
 - Logs are single-line JSON. They carry drop reasons (`not_allowlisted`, `not_addressed`, `duplicate`, `rate_limited`) with chat and user ids, which you need for the allowlist. The logger redacts secrets and bearer values.
-- Keep secrets in the host secret store or a gitignored env file. `.env.example` holds placeholders.
+- Keep secrets in the gitignored `.env`. Cloudflare, Vercel, Fly.io, Railway, Render, and a VPS load that file. `.env.example` holds placeholders.
 
 ## License
 

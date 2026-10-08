@@ -7,7 +7,7 @@ When a Telegram wake arrives as a `<webhook_event>`, follow [`.grok/skills/teleg
 ## Secrets
 
 - Secrets are the bot token, the webhook secret, the sender key, the reply-token secret, and the outbound key.
-- The person enters each secret in their host's secret store or in their own terminal session. Ask them to confirm that the variable is set. These are host secrets, separate from Grok Bot connector credentials, so ask in plain chat rather than with a secret-request.
+- The person writes each secret once, in the gitignored `.env`. Cloudflare, Vercel, Fly.io, Railway, Render, and a VPS load that file for deploy. `npm run set-webhook` and `npm run set-commands` read it on every host. Ask whether the name is in `.env`. These are host secrets, separate from Grok Bot connector credentials, so ask in plain chat rather than with a secret-request.
 - Keep secrets out of the chat, the repo, commits, logs, screenshots, and files you create. That includes `Authorization` headers and Telegram request URLs, because the bot token is in the path.
 - `.env.example` holds placeholders. Real env files are gitignored.
 

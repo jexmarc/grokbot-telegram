@@ -15,7 +15,8 @@ The one-line prompt a person pastes to start is the fenced block at the top of `
 
 - Secrets are the bot token, the webhook secret, the sender key, the reply-token secret, and `OUTBOUND_API_KEY`.
 - Every value for this setup goes in the gitignored `.env`, copied from `.env.example`. They type or generate each value there once.
-- When a name is already in `.env`, run the command that reads the file. Ask "is `NAME` in `.env`?" and they answer yes or no.
+- That file is the source for every host. Cloudflare, Vercel, Fly.io, Railway, Render, and a VPS load it for deploy. `npm run set-webhook` and `npm run set-commands` read it on every host.
+- When a name is already in `.env`, run the command that reads the file. Ask "is `NAME` in `.env`?" and they answer yes or no. Do not ask them to type the value into a second prompt.
 - Keep secrets out of the chat, the repo, commits, prompt files, and logs. That includes `Authorization` headers and Telegram URLs, because the bot token is in the URL path.
 - If a command would echo a secret, ask them to run it themselves and tell you only whether it worked.
 
@@ -151,7 +152,7 @@ openssl rand -hex 32
 - First value, on `TELEGRAM_WEBHOOK_SECRET`. It becomes Telegram's `secret_token`. It needs 16 to 256 characters from `A-Z`, `a-z`, `0-9`, `_`, and `-`. Hex output fits.
 - Second value, on `REPLY_TOKEN_SECRET`. It signs the short-lived reply tokens. It needs at least 32 characters. Use a different value for every bridge.
 
-Leave `PUBLIC_BASE_URL`, `GROK_WEBHOOK_URL`, and `GROK_WEBHOOK_SENDER_KEY` out of `.env` until those values exist. Before the upload in step 8, delete every line that is still empty or still example text. `wrangler secret bulk` uploads every `KEY=value` line, including an empty value.
+Leave `PUBLIC_BASE_URL`, `GROK_WEBHOOK_URL`, and `GROK_WEBHOOK_SENDER_KEY` out of `.env` until those values exist. Before the host loads the file in step 8, delete every line that is still empty or still example text. An empty `KEY=` line is still a value on every host that loads the file.
 
 Check: they confirm both lines are filled, and both values stayed out of the chat.
 
@@ -164,7 +165,7 @@ The other hosts:
 - **Vercel.** Typing goes out once per event: at the wake and after each progress line. Telegram shows it for about 5 seconds. The 👀 stays until the answer. Dedupe lives in that instance's memory.
 - **Node** on Fly.io, Railway, Render, or a VPS. `npm start` listens on `PORT` (default 8080). Put HTTPS in front. Dedupe lives in that process's memory. A restart ends typing for wakes in flight, and their 👀 stays until a later final send.
 
-`.env` already holds the token, the username, the allowlist, and the two generated secrets. The commands below read that file. Skip any value that is already in it.
+`.env` already holds the token, the username, the allowlist, and the two generated secrets. Whichever host they pick, that host loads this file. `npm run set-webhook` and `npm run set-commands` read it afterward. Skip any value that is already in the file.
 
 ### Cloudflare
 
@@ -195,7 +196,7 @@ For local development, `npm run cf:dev` reads `.env`. Wrangler reads `.dev.vars`
 
 Checked 8 October 2026. The Hobby plan is $0 a month for personal, non-commercial use and includes 1 million function invocations, 4 hours of active CPU, and 360 GB-hours of provisioned memory a month, which covers a personal bot. The first paid plan is Pro at $20 a month.
 
-The Vercel CLI links this repo to a project and deploys it. The team Environment Variables page imports `.env`.
+The Vercel CLI links this repo to a project and deploys it. It has no command that loads `.env`. Point the team Environment Variables page at that file (paste or import it). `npm run set-webhook` and `npm run set-commands` still read the local `.env`.
 
 ```bash
 npx vercel link
@@ -214,23 +215,27 @@ npx vercel --prod
 
 Checked 8 October 2026. Railway Free's $1 monthly credit does not cover a process left running, at $10 per GB-month of memory, and Hobby is $5 a month with $5 of credit included. Render's free web service is $0 for 512 MB and spins down after 15 minutes without a request, so the instance that stays up is $7 a month, and Fly.io has no free tier after a trial of 2 machine-hours or 7 days, with the smallest always-on machine at $2.19 per 30 days.
 
-`npm start` runs this bridge with Node and reads `.env`. On Fly.io, `fly secrets import` loads that file. On Railway, the service Variables RAW Editor takes the contents of `.env`, and the start command is `npm start`. On Render, the start command is `npm start` and the service environment holds the same values.
+`npm start` runs this bridge with Node and reads `.env`. `npm run set-webhook` and `npm run set-commands` read that same file after the host is up.
 
-On the machine that has `.env`:
+On a VPS, the checkout on the machine includes `.env`. The start command is:
 
 ```bash
 npm start
 ```
 
-On Fly.io:
+On Fly.io, `fly secrets import` is Fly's command for loading secrets. It reads `.env` from standard input. The app's start command is `npm start`.
 
 ```bash
 fly secrets import < .env
 ```
 
-The process starts only with a valid `TELEGRAM_WEBHOOK_SECRET`, `REPLY_TOKEN_SECRET`, and `PUBLIC_BASE_URL`, and it logs the names of any that are missing. They write the https origin in front of the process onto `PUBLIC_BASE_URL`, then start again.
+On Railway, they paste `.env` into the service Variables RAW Editor. The start command is `npm start`.
 
-Check, on every host: `GET /healthz` returns JSON with `"ok": true`. `ready` can stay false until step 9. In `configured`, `telegram_bot_token`, `telegram_webhook_secret`, `bot_username`, `reply_token_secret`, `public_base_url`, and `allowlist` are true, and `problems` is empty. `problems` lists the names of settings that were set but rejected, such as a short `REPLY_TOKEN_SECRET`. Fix each one in `.env` and upload again before you continue. A normal health body holds only booleans and setting names. If the body holds anything else, keep it out of the chat.
+On Render, there is no bulk-secret command. They point the service environment at `.env`. The start command is `npm start`.
+
+The process starts only with a valid `TELEGRAM_WEBHOOK_SECRET`, `REPLY_TOKEN_SECRET`, and `PUBLIC_BASE_URL`, and it logs the names of any that are missing. They write the https origin in front of the process onto `PUBLIC_BASE_URL` in `.env`, load the file again the same way, and start again.
+
+Check, on every host: `GET /healthz` returns JSON with `"ok": true`. `ready` can stay false until step 9. In `configured`, `telegram_bot_token`, `telegram_webhook_secret`, `bot_username`, `reply_token_secret`, `public_base_url`, and `allowlist` are true, and `problems` is empty. `problems` lists the names of settings that were set but rejected, such as a short `REPLY_TOKEN_SECRET`. Fix each one in `.env` and load the file again before you continue. A normal health body holds only booleans and setting names. If the body holds anything else, keep it out of the chat.
 
 ## Step 9: Create the Grok Bot webhook routine
 
@@ -291,7 +296,7 @@ They write the URL onto `GROK_WEBHOOK_URL` and the sender key onto `GROK_WEBHOOK
 
 They confirm both lines are filled. The URL also grants access, so ask only "is it an https URL?".
 
-Upload `.env` again with the same command as step 8. Cloudflare is `npx wrangler secret bulk .env`. Vercel is another paste or import of `.env` on the team Environment Variables page, then `npx vercel --prod`. Node is a restart of `npm start`, or `fly secrets import < .env` again.
+Load `.env` again the same way as step 8. Cloudflare is `npx wrangler secret bulk .env`. Vercel is another paste or import of `.env` on the team Environment Variables page, then `npx vercel --prod`. Fly.io is `fly secrets import < .env`. Railway is the RAW Editor again. Render is the service environment pointed at `.env` again. A VPS is a restart of `npm start` so it reads the file.
 
 Check: `/healthz` now has `"ready": true`.
 
@@ -376,7 +381,7 @@ If the group was upgraded from a basic group, its chat id changed. Look for a `c
 | `/send` returns 403 `scope` | `chat_id` or `message_thread_id` differs from the token's. Use the values from `reply`. |
 | Telegram says "message is too long" | The bridge splits at 4096 characters, so the text had a broken entity. Keep `parse_mode` unset. |
 | HTTP 429 from Telegram | For `retry_after` up to 5 seconds, the bridge waits and retries, twice at most. Longer limits come back from `/send` as 502 with `retry_after`. Wait that long, then send again. |
-| `/healthz` shows `ready: false` with names in `problems` | Those settings were set but rejected, for example too short, wrong characters, or plain `http`. Fix each value on the host and redeploy. |
+| `/healthz` shows `ready: false` with names in `problems` | Those settings were set but rejected, for example too short, wrong characters, or plain `http`. Fix each value in `.env`, load the file again, and redeploy. |
 | The person gets "Sorry — I couldn't pick that up just now" and the log says `forward` with `ok: false` | Grok Bot rejected the wake, usually because of a wrong URL or sender key. The bridge stopped typing, removed the 👀, and sent that one silent line. After the fix, the person sends the message again. `FORWARD_FAILURE_TEXT` changes the line or turns it `off`. |
 | Log `forward_ambiguous` | The forward timed out, was reset, or got a gateway error, so Grok Bot may still have the wake. Typing lasts until the answer or the lease. Frequent ones point to a slow routine URL or a flaky proxy. |
 | Typing never starts, or stops at once, on Cloudflare | Confirm that the `CHAT_SESSION` Durable Object binding deployed, with the migration in `wrangler.toml`. |
@@ -391,10 +396,10 @@ If the group was upgraded from a basic group, its chat id changed. Look for a `c
 
 Rotate when they ask, or when a secret may have leaked. They generate each new value themselves.
 
-1. **Webhook secret.** Run `openssl rand -hex 32`, write it on `TELEGRAM_WEBHOOK_SECRET` in `.env`, upload the file the same way as step 8, and run `npm run set-webhook` so Telegram's `secret_token` matches.
-2. **Reply-token secret.** Write a new value on `REPLY_TOKEN_SECRET` in `.env` and upload again. Outstanding reply tokens stop working, so in-flight turns need a new Telegram message.
-3. **Bot token.** BotFather `/revoke`, write the new token on `TELEGRAM_BOT_TOKEN` in `.env`, upload again, and run `npm run set-webhook`.
-4. **Sender key.** Replace the routine. Create a new webhook routine with the same saved prompt. Give them the two links for the new folder id. They write the URL and sender key into `.env` and upload again. Once a direct message works, delete the old routine.
+1. **Webhook secret.** Run `openssl rand -hex 32`, write it on `TELEGRAM_WEBHOOK_SECRET` in `.env`, load the file the same way as step 8, and run `npm run set-webhook` so Telegram's `secret_token` matches.
+2. **Reply-token secret.** Write a new value on `REPLY_TOKEN_SECRET` in `.env` and load the file again. Outstanding reply tokens stop working, so in-flight turns need a new Telegram message.
+3. **Bot token.** BotFather `/revoke`, write the new token on `TELEGRAM_BOT_TOKEN` in `.env`, load the file again, and run `npm run set-webhook`.
+4. **Sender key.** Replace the routine. Create a new webhook routine with the same saved prompt. Give them the two links for the new folder id. They write the URL and sender key into `.env` and load the file again. Once a direct message works, delete the old routine.
 
 Check after each rotation: `/healthz` is ready, `webhook-info` shows an empty `last_error_message`, and a fresh direct message gets a reply.
 
